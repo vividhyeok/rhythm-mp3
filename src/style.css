@@ -1,0 +1,573 @@
+/* ------------------------------------------------------------------
+   MP3 RHYTHM // LCD-4K
+   Monochrome handheld-LCD theme (1990s-2000s portable device).
+------------------------------------------------------------------- */
+
+:root {
+  --lcd: #b9c0a8;
+  --lcd-dark: #a9b096;
+  --ink: #23291d;
+  --ink-dim: rgba(35, 41, 29, 0.55);
+  --ink-faint: rgba(35, 41, 29, 0.25);
+  --bezel: #3a3f36;
+  --bezel-light: #565c4f;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  background: #6b7060;
+  background-image: radial-gradient(circle at 50% 30%, #7a7f6e 0%, #5d6254 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'Courier New', ui-monospace, Menlo, Consolas, monospace;
+  color: var(--ink);
+  letter-spacing: 0.5px;
+}
+
+/* ---------------- device frame ---------------- */
+
+#device {
+  background: var(--bezel);
+  border-radius: 18px;
+  padding: 26px 26px 14px;
+  box-shadow:
+    inset 0 2px 0 var(--bezel-light),
+    inset 0 -3px 0 #262a23,
+    0 14px 40px rgba(0, 0, 0, 0.45);
+}
+
+#screen-bezel {
+  position: relative;
+  background: var(--lcd);
+  border: 3px solid #1c2018;
+  border-radius: 6px;
+  box-shadow:
+    inset 0 0 24px rgba(35, 41, 29, 0.25),
+    inset 0 2px 6px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+#scanlines {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgba(35, 41, 29, 0.045) 0px,
+    rgba(35, 41, 29, 0.045) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+  z-index: 50;
+}
+
+#device-label {
+  margin-top: 10px;
+  text-align: center;
+  color: #c9cec0;
+  font-size: 11px;
+  letter-spacing: 3px;
+  text-shadow: 0 -1px 0 #262a23;
+}
+
+#app {
+  width: 920px;
+  max-width: calc(100vw - 80px);
+  height: 780px;
+  max-height: calc(100vh - 140px);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ---------------- generic screen layout ---------------- */
+
+.screen {
+  width: 100%;
+  height: 100%;
+  padding: 22px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(255, 255, 255, 0.12), transparent 60%),
+    var(--lcd);
+}
+
+.screen-header {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.screen-title {
+  font-size: 20px;
+  font-weight: bold;
+  letter-spacing: 4px;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 4px;
+}
+
+.title-blink {
+  font-size: 42px;
+  font-weight: bold;
+  letter-spacing: 8px;
+  text-align: center;
+  margin-top: 8px;
+  text-shadow:
+    3px 0 0 rgba(35, 41, 29, 0.18),
+    -1px 0 0 rgba(35, 41, 29, 0.1);
+}
+
+.subtitle {
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-dim);
+  letter-spacing: 3px;
+  margin-bottom: 6px;
+}
+
+.song-title {
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 1px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 2px solid var(--ink);
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.status-line {
+  font-size: 12px;
+  color: var(--ink-dim);
+  min-height: 16px;
+  letter-spacing: 1px;
+}
+
+.footer-hint {
+  margin-top: auto;
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-dim);
+  letter-spacing: 1px;
+  border-top: 1px dashed var(--ink-faint);
+  padding-top: 8px;
+}
+
+/* ---------------- buttons ---------------- */
+
+.btn {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  color: var(--ink);
+  background: transparent;
+  border: 2px solid var(--ink);
+  padding: 8px 16px;
+  cursor: pointer;
+  box-shadow: 3px 3px 0 var(--ink);
+  transition: none;
+}
+
+.btn:hover {
+  background: rgba(35, 41, 29, 0.12);
+}
+
+.btn:active {
+  transform: translate(3px, 3px);
+  box-shadow: 0 0 0 var(--ink);
+}
+
+.btn.primary {
+  background: var(--ink);
+  color: var(--lcd);
+}
+
+.btn.primary:hover {
+  background: #39412f;
+}
+
+.btn.tiny {
+  font-size: 11px;
+  padding: 4px 10px;
+  box-shadow: 2px 2px 0 var(--ink);
+}
+
+.btn.tiny:active {
+  transform: translate(2px, 2px);
+}
+
+.btn.big {
+  font-size: 17px;
+  padding: 12px 22px;
+  align-self: center;
+}
+
+.btn.danger {
+  border-style: dashed;
+}
+
+.btn.active {
+  background: var(--ink);
+  color: var(--lcd);
+}
+
+.btn-row {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+/* ---------------- home ---------------- */
+
+.song-list {
+  flex: 1;
+  overflow-y: auto;
+  border: 2px solid var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.song-empty {
+  text-align: center;
+  padding: 40px 0;
+  color: var(--ink-dim);
+  font-size: 13px;
+  letter-spacing: 2px;
+}
+
+.song-row {
+  display: grid;
+  grid-template-columns: 1fr 70px 64px 190px auto;
+  gap: 10px;
+  align-items: center;
+  padding: 7px 10px;
+  border: 1px solid var(--ink-faint);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.song-row:hover {
+  background: var(--ink);
+  color: var(--lcd);
+}
+
+.song-row:hover .btn {
+  color: var(--lcd);
+  border-color: var(--lcd);
+  box-shadow: 2px 2px 0 var(--lcd);
+}
+
+.song-name {
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.song-dur,
+.song-state,
+.song-best {
+  font-size: 11px;
+  letter-spacing: 1px;
+}
+
+.home.drag-over .song-list {
+  outline: 3px dashed var(--ink);
+  outline-offset: 4px;
+}
+
+/* ---------------- segment select ---------------- */
+
+.waveform {
+  width: 100%;
+  height: 150px;
+  border: 2px solid var(--ink);
+  background: var(--lcd);
+  cursor: crosshair;
+  image-rendering: pixelated;
+  touch-action: none;
+}
+
+.time-line {
+  text-align: center;
+  font-size: 22px;
+  font-weight: bold;
+  letter-spacing: 3px;
+}
+
+.sel-line {
+  text-align: center;
+  font-size: 13px;
+  letter-spacing: 1px;
+  background: var(--ink);
+  color: var(--lcd);
+  padding: 5px 8px;
+}
+
+.diff-row {
+  gap: 8px;
+}
+
+.form-label {
+  font-size: 12px;
+  font-weight: bold;
+  letter-spacing: 1px;
+}
+
+/* ---------------- analyzing ---------------- */
+
+.analyzing {
+  justify-content: center;
+}
+
+.analyze-log {
+  border: 2px solid var(--ink);
+  background: rgba(255, 255, 255, 0.08);
+  min-height: 180px;
+  padding: 16px;
+  font-size: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.log-line {
+  letter-spacing: 1px;
+}
+
+.log-line:last-child {
+  animation: blink 0.8s steps(2) infinite;
+}
+
+.progress-wrap {
+  height: 18px;
+  border: 2px solid var(--ink);
+  padding: 2px;
+}
+
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: repeating-linear-gradient(
+    45deg,
+    var(--ink) 0px,
+    var(--ink) 6px,
+    transparent 6px,
+    transparent 12px
+  );
+  transition: width 0.15s linear;
+}
+
+/* ---------------- game ---------------- */
+
+.game {
+  padding: 10px 12px;
+  gap: 8px;
+  align-items: center;
+}
+
+.game-hud-row {
+  display: flex;
+  gap: 10px;
+  width: 100%;
+  justify-content: flex-end;
+}
+
+.canvas-wrap {
+  position: relative;
+  line-height: 0;
+}
+
+.game-canvas {
+  border: 2px solid var(--ink);
+  background: var(--lcd);
+  max-width: calc(100vw - 140px);
+  max-height: calc(100vh - 220px);
+  width: auto;
+  height: auto;
+  aspect-ratio: 520 / 720;
+}
+
+.pause-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(185, 192, 168, 0.92);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.4;
+  z-index: 10;
+}
+
+/* ---------------- panels & modal ---------------- */
+
+.panel {
+  border: 3px solid var(--ink);
+  background: var(--lcd);
+  padding: 26px 34px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-shadow: 6px 6px 0 var(--ink);
+  min-width: 300px;
+}
+
+.panel-title {
+  font-size: 22px;
+  letter-spacing: 5px;
+  text-align: center;
+  border-bottom: 2px solid var(--ink);
+  padding-bottom: 8px;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(35, 41, 29, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.form-row {
+  display: grid;
+  grid-template-columns: 170px 90px 1fr;
+  gap: 10px;
+  align-items: center;
+}
+
+.form-hint {
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+
+.form-row input,
+.form-row select {
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: bold;
+  color: var(--ink);
+  background: rgba(255, 255, 255, 0.15);
+  border: 2px solid var(--ink);
+  padding: 4px 6px;
+  width: 90px;
+}
+
+/* ---------------- result ---------------- */
+
+.result {
+  align-items: center;
+  justify-content: center;
+}
+
+.grade-row {
+  display: flex;
+  align-items: center;
+  gap: 30px;
+}
+
+.grade-box {
+  width: 130px;
+  height: 130px;
+  border: 4px solid var(--ink);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 72px;
+  font-weight: bold;
+  box-shadow: 6px 6px 0 var(--ink);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.score-col {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.result-score {
+  font-size: 40px;
+  font-weight: bold;
+  letter-spacing: 4px;
+}
+
+.new-best {
+  font-size: 15px;
+  font-weight: bold;
+  letter-spacing: 2px;
+  background: var(--ink);
+  color: var(--lcd);
+  padding: 3px 8px;
+  align-self: flex-start;
+}
+
+.best-line {
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: 160px 120px;
+  gap: 6px 20px;
+  border: 2px solid var(--ink);
+  padding: 16px 22px;
+  font-size: 15px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.stat-key {
+  color: var(--ink-dim);
+  letter-spacing: 2px;
+}
+
+.stat-val {
+  text-align: right;
+  font-weight: bold;
+}
+
+/* ---------------- animations ---------------- */
+
+@keyframes blink {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0.25; }
+}
+
+.blink {
+  animation: blink 0.9s steps(2) infinite;
+}
+
+/* scrollbars */
+::-webkit-scrollbar {
+  width: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--lcd-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ink);
+  border: 2px solid var(--lcd-dark);
+}
