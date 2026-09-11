@@ -3,57 +3,57 @@ import { mulberry32 } from '../util/random';
 
 export interface ChartOptions {
   difficulty: Difficulty;
-  /** deterministic seed (hash of song+start+difficulty) */
+  /** deterministic seed (hash of song+start+difficulty+variant) */
   seed: number;
   bpm: number;
   beatPhaseSec: number;
+  /** confidence of the tempo estimate; low confidence reduces grid snapping */
+  tempoConfidence?: number;
   /** segment duration in seconds */
   duration: number;
 }
 
 interface DiffCfg {
-  /** minimum seconds between consecutive note rows */
   minInterval: number;
-  /** keep onsets at or above this strength percentile (0..1) */
-  strengthPct: number;
-  /** grid subdivision as a fraction of a beat (1/2 = eighth notes) */
+  targetNps: number;
   subdivision: number;
-  /** snap window as a fraction of the subdivision length */
   snapWindow: number;
-  /** onsets at/above this strength percentile may become chords */
   chordPct: number;
-  /** minimum seconds between chords */
   chordGap: number;
+  densityWindow: number;
 }
 
 function diffCfg(difficulty: Difficulty, beatSec: number): DiffCfg {
   switch (difficulty) {
     case 'EASY':
       return {
-        minInterval: Math.max(0.22, beatSec * 0.5),
-        strengthPct: 0.55,
+        minInterval: Math.max(0.22, beatSec * 0.45),
+        targetNps: 1.7,
         subdivision: 1 / 2,
-        snapWindow: 0.4,
-        chordPct: 2, // effectively disabled
+        snapWindow: 0.34,
+        chordPct: 2,
         chordGap: Infinity,
+        densityWindow: 2,
       };
     case 'NORMAL':
       return {
-        minInterval: Math.max(0.13, beatSec * 0.25),
-        strengthPct: 0.35,
+        minInterval: Math.max(0.13, beatSec * 0.22),
+        targetNps: 2.8,
         subdivision: 1 / 2,
-        snapWindow: 0.35,
-        chordPct: 0.92,
+        snapWindow: 0.30,
+        chordPct: 0.93,
         chordGap: 2.0,
+        densityWindow: 2,
       };
     case 'HARD':
       return {
-        minInterval: Math.max(0.095, beatSec * 0.2),
-        strengthPct: 0.18,
+        minInterval: Math.max(0.095, beatSec * 0.16),
+        targetNps: 4.2,
         subdivision: 1 / 4,
-        snapWindow: 0.3,
-        chordPct: 0.85,
-        chordGap: 1.0,
+        snapWindow: 0.26,
+        chordPct: 0.86,
+        chordGap: 0.9,
+        densityWindow: 2,
       };
   }
 }
@@ -64,28 +64,14 @@ function percentile(sortedAsc: number[], p: number): number {
   return sortedAsc[idx];
 }
 
-/** Timbral lane preference: low->left, high->right, mid->inner. */
 function laneScores(o: Onset): [number, number, number, number] {
   const { low, mid, high } = o;
   return [
-    low * 1.2 + mid * 0.25,
-    low * 0.55 + mid * 0.7 + high * 0.1,
-    mid * 0.7 + high * 0.55 + low * 0.1,
-    high * 1.2 + mid * 0.25,
+    low * 1.15 + mid * 0.25,
+    low * 0.45 + mid * 0.75 + high * 0.10,
+    mid * 0.75 + high * 0.45 + low * 0.10,
+    high * 1.15 + mid * 0.25,
   ];
-}
-
-function argmax(scores: readonly number[], exclude = -1): number {
-  let best = -1;
-  let bestV = -Infinity;
-  for (let i = 0; i < scores.length; i++) {
-    if (i === exclude) continue;
-    if (scores[i] > bestV) {
-      bestV = scores[i];
-      best = i;
-    }
-  }
-  return best < 0 ? 0 : best;
 }
 
 function handOf(lane: number): number {
@@ -98,59 +84,156 @@ interface Row {
   onset: Onset;
 }
 
+function dedupeRows(rows: Row[]): Row[] {
+  if (rows.length <= 1) return rows;
+  const sorted = [...rows].sort((a, b) => a.time - b.time);
+  const out: Row[] = [];
+  for (const row of sorted) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(row.time - last.time) < 0.018) {
+      if (row.strength > last.strength) out[out.length - 1] = row;
+    } else {
+      out.push(row);
+    }
+  }
+  return out;
+}
+
+function selectRowsByLocalDensity(rows: Row[], cfg: DiffCfg, duration: number): Row[] {
+  const accepted: Row[] = [];
+  const strengths = rows.map((r) => r.strength);
+  const globalAvg = strengths.length > 0
+    ? strengths.reduce((a, b) => a + b, 0) / strengths.length
+    : 0.5;
+
+  for (let start = 0; start < duration; start += cfg.densityWindow) {
+    const end = Math.min(duration, start + cfg.densityWindow);
+    const bucket = rows.filter((r) => r.time >= start && r.time < end);
+    if (bucket.length === 0) continue;
+
+    const localAvg = bucket.reduce((s, r) => s + r.strength, 0) / bucket.length;
+    const relativeActivity = globalAvg > 1e-6 ? localAvg / globalAvg : 1;
+    const activityFactor = Math.min(1.35, Math.max(0.60, 0.72 + 0.32 * relativeActivity));
+    const quota = Math.max(1, Math.round(cfg.targetNps * (end - start) * activityFactor));
+
+    const ranked = [...bucket].sort((a, b) => b.strength - a.strength || a.time - b.time);
+    let added = 0;
+    for (const candidate of ranked) {
+      if (added >= quota) break;
+      let ok = true;
+      for (const existing of accepted) {
+        if (Math.abs(existing.time - candidate.time) < cfg.minInterval) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        accepted.push(candidate);
+        added++;
+      }
+    }
+  }
+
+  accepted.sort((a, b) => a.time - b.time);
+  return accepted;
+}
+
+const EASY_PATTERNS = [
+  [0, 2, 1, 3],
+  [3, 1, 2, 0],
+  [0, 1, 2, 3],
+  [3, 2, 1, 0],
+];
+
+const NORMAL_PATTERNS = [
+  ...EASY_PATTERNS,
+  [0, 2, 3, 1],
+  [3, 1, 0, 2],
+  [1, 3, 0, 2],
+  [2, 0, 3, 1],
+];
+
+const HARD_PATTERNS = [
+  ...NORMAL_PATTERNS,
+  [0, 2, 0, 3],
+  [3, 1, 3, 0],
+  [1, 2, 0, 3],
+  [2, 1, 3, 0],
+];
+
+function patternsFor(difficulty: Difficulty): number[][] {
+  if (difficulty === 'EASY') return EASY_PATTERNS;
+  if (difficulty === 'NORMAL') return NORMAL_PATTERNS;
+  return HARD_PATTERNS;
+}
+
+function chooseLane(
+  row: Row,
+  desired: number,
+  lastLane: number,
+  runLen: number,
+  dt: number,
+  rng: () => number,
+): number {
+  const timbre = laneScores(row.onset);
+  const maxTimbre = Math.max(...timbre, 1e-9);
+  let bestLane = 0;
+  let bestScore = -Infinity;
+
+  for (let lane = 0; lane < 4; lane++) {
+    let score = (timbre[lane] / maxTimbre) * 0.42;
+    if (lane === desired) score += 1.0;
+    if (lastLane >= 0 && dt < 0.22 && handOf(lane) !== handOf(lastLane)) score += 0.22;
+    if (lane === lastLane && (runLen >= 2 || dt < 0.16)) score -= 1.1;
+    score += rng() * 0.035;
+    if (score > bestScore) {
+      bestScore = score;
+      bestLane = lane;
+    }
+  }
+  return bestLane;
+}
+
 /**
  * Generate a deterministic 4-key chart from detected onsets.
- * Same onsets + same options => identical chart.
+ *
+ * Density is budgeted locally in two-second windows so quiet/strong sections
+ * breathe differently. Lane assignment follows short playable pattern phrases
+ * first, with timbre used as a secondary hint instead of a hard low-left /
+ * high-right mapping.
  */
 export function generateChart(onsets: Onset[], opts: ChartOptions): Chart {
   const rng = mulberry32(opts.seed);
   const beatSec = 60 / Math.min(240, Math.max(40, opts.bpm));
   const cfg = diffCfg(opts.difficulty, beatSec);
   const subSec = beatSec * cfg.subdivision;
-  const snapWin = subSec * cfg.snapWindow;
+  const confidence = Math.min(1, Math.max(0, opts.tempoConfidence ?? 0.75));
+  const snapTrust = confidence < 0.2 ? 0 : 0.35 + 0.65 * confidence;
+  const snapWin = subSec * cfg.snapWindow * snapTrust;
 
-  // 1) Snap onsets close to the beat grid onto it.
-  const snapped: Row[] = onsets
-    .filter((o) => o.time >= 0 && o.time <= opts.duration)
-    .map((o) => {
-      let t = o.time;
-      if (subSec > 0.05) {
-        const k = Math.round((t - opts.beatPhaseSec) / subSec);
-        const gridT = opts.beatPhaseSec + k * subSec;
-        if (Math.abs(gridT - t) <= snapWin && gridT >= 0 && gridT <= opts.duration) {
-          t = gridT;
+  const snapped = dedupeRows(
+    onsets
+      .filter((o) => o.time >= 0 && o.time <= opts.duration)
+      .map((o) => {
+        let t = o.time;
+        if (subSec > 0.05 && snapWin > 0) {
+          const k = Math.round((t - opts.beatPhaseSec) / subSec);
+          const gridT = opts.beatPhaseSec + k * subSec;
+          if (Math.abs(gridT - t) <= snapWin && gridT >= 0 && gridT <= opts.duration) t = gridT;
         }
-      }
-      return { time: t, strength: o.strength, onset: o };
-    });
+        return { time: t, strength: o.strength, onset: o };
+      }),
+  );
 
-  // 2) Density control by difficulty: strength percentile + min interval
-  //    (strong-priority greedy acceptance).
-  const strengths = snapped.map((r) => r.strength).sort((a, b) => a - b);
-  const thr = percentile(strengths, cfg.strengthPct);
-  const candidates = snapped
-    .filter((r) => r.strength >= thr)
-    .sort((a, b) => b.strength - a.strength);
+  let rows = selectRowsByLocalDensity(snapped, cfg, opts.duration);
 
-  const accepted: Row[] = [];
-  for (const c of candidates) {
-    let ok = true;
-    for (const a of accepted) {
-      if (Math.abs(a.time - c.time) < cfg.minInterval) {
-        ok = false;
-        break;
-      }
-    }
-    if (ok) accepted.push(c);
-  }
-  accepted.sort((a, b) => a.time - b.time);
-
-  // 3) Fallback for very sparse audio: quarter-note grid from the tempo.
-  let rows = accepted;
+  // Sparse-content fallback. Keep difficulty meaningful by changing the grid
+  // subdivision rather than filling every mode with the same quarter notes.
   if (rows.length < 8 && beatSec > 0.2) {
     rows = [];
+    const step = opts.difficulty === 'EASY' ? beatSec : beatSec * 0.5;
     const start = Math.max(0, opts.beatPhaseSec);
-    for (let t = start; t < opts.duration - 0.2; t += beatSec) {
+    for (let t = start; t < opts.duration - 0.2; t += step) {
       rows.push({
         time: t,
         strength: 0.5,
@@ -159,79 +242,47 @@ export function generateChart(onsets: Onset[], opts: ChartOptions): Chart {
     }
   }
 
-  // 4) Lane assignment: timbre-based preference + deterministic variation
-  //    + playability constraints (limited repeats, hand alternation).
   const notes: NoteEvent[] = [];
+  const patterns = patternsFor(opts.difficulty);
+  let pattern = patterns[Math.floor(rng() * patterns.length)];
   let lastLane = -1;
   let lastTime = -Infinity;
   let runLen = 0;
 
-  for (const row of rows) {
-    const scores = laneScores(row.onset);
-    let lane = argmax(scores);
-
-    // Deterministic variation: sometimes take the 2nd-best lane.
-    if (rng() < 0.3) {
-      const alt = argmax(scores, lane);
-      if (alt !== lane) lane = alt;
-    }
-
+  for (let i = 0; i < rows.length; i++) {
+    if (i > 0 && i % 4 === 0) pattern = patterns[Math.floor(rng() * patterns.length)];
+    const row = rows[i];
+    const desired = pattern[i % 4];
     const dt = row.time - lastTime;
-
-    // Avoid excessive same-lane runs / machine-gun repeats.
-    if (lane === lastLane && (runLen >= 2 || dt < 0.18)) {
-      lane = argmax(scores, lastLane);
-    }
-
-    // Encourage hand alternation on fast passages.
-    if (lastLane >= 0 && dt < 0.22 && handOf(lane) === handOf(lastLane) && lane !== lastLane) {
-      const otherHandLanes = handOf(lastLane) === 0 ? [2, 3] : [0, 1];
-      const bestOther = otherHandLanes.reduce((a, b) => (scores[a] >= scores[b] ? a : b));
-      if (scores[bestOther] > scores[lane] * 0.55) lane = bestOther;
-    }
+    const lane = chooseLane(row, desired, lastLane, runLen, dt, rng);
 
     if (lane === lastLane) runLen++;
     else runLen = 1;
     lastLane = lane;
     lastTime = row.time;
-
     notes.push({ time: row.time, lane, strength: row.strength });
   }
 
-  // 5) Chords: rare, only on very strong accents, cross-hand pairs only.
+  // Rare cross-hand chords on strong accents only.
   const chords: NoteEvent[] = [];
-  if (isFinite(cfg.chordGap)) {
+  if (isFinite(cfg.chordGap) && rows.length > 0) {
     const chordThr = percentile(
       rows.map((r) => r.strength).sort((a, b) => a - b),
       cfg.chordPct,
     );
     let lastChordTime = -Infinity;
-    const noteAtTime = new Map<number, number[]>();
     for (const nt of notes) {
-      const key = Math.round(nt.time * 1000);
-      const arr = noteAtTime.get(key);
-      if (arr) arr.push(nt.lane);
-      else noteAtTime.set(key, [nt.lane]);
-    }
-
-    for (const nt of notes) {
-      if (nt.strength < chordThr) continue;
-      if (nt.time - lastChordTime < cfg.chordGap) continue;
-      const key = Math.round(nt.time * 1000);
-      if ((noteAtTime.get(key)?.length ?? 0) > 1) continue;
+      if (nt.strength < chordThr || nt.time - lastChordTime < cfg.chordGap) continue;
       const partners = handOf(nt.lane) === 0 ? [2, 3] : [0, 1];
       const partner = partners[Math.floor(rng() * partners.length)];
       chords.push({ time: nt.time, lane: partner, strength: nt.strength });
-      noteAtTime.get(key)!.push(partner);
       lastChordTime = nt.time;
     }
   }
 
   const all = notes.concat(chords);
   all.sort((a, b) => (a.time - b.time) || (a.lane - b.lane));
-  for (const nt of all) {
-    nt.time = Math.round(nt.time * 1000) / 1000;
-  }
+  for (const nt of all) nt.time = Math.round(nt.time * 1000) / 1000;
 
   return {
     notes: all,

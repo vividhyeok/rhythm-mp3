@@ -1,4 +1,4 @@
-import type { Chart, Difficulty, GameResult, SongMeta } from './types';
+import type { Chart, ChartSource, Difficulty, GameResult, SongMeta } from './types';
 
 /** Mutable cross-screen session state (in-memory only). */
 export interface Session {
@@ -9,6 +9,9 @@ export interface Session {
   segmentDuration: number;
   difficulty: Difficulty;
   chart: Chart | null;
+  analysisSource: ChartSource | null;
+  analysisKey: string | null;
+  chartVariant: number;
   result: GameResult | null;
   isNewBest: boolean;
   bestScore: number | null;
@@ -21,6 +24,9 @@ export const session: Session = {
   segmentDuration: 40,
   difficulty: 'NORMAL',
   chart: null,
+  analysisSource: null,
+  analysisKey: null,
+  chartVariant: 0,
   result: null,
   isNewBest: false,
   bestScore: null,
