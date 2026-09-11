@@ -15,16 +15,17 @@ function classifyKind(o: Onset): MusicalEventKind {
   // Bright, short, noisy attacks tend to behave like hats/cymbal ticks.
   if (o.high >= 0.50 && o.centroid >= 0.52 && sustain < 0.22) return 'HAT';
 
+  // Sustained low-frequency energy is more useful as a bass/riff gesture than a drum hit.
+  if (o.low >= 0.40 && sustain >= 0.16) return 'BASS';
+
+  // Sustained, relatively tonal energy must win over the broadband-snare heuristic;
+  // otherwise pads/guitars with a sharp attack get flattened back into taps.
+  if (sustain >= 0.28 && flatness <= 0.48) return 'HARMONIC';
+
   // Broadband mid/high transients are a useful snare/clap proxy.
   if (attack >= 0.34 && o.low < 0.46 && o.mid + o.high >= 0.58 && flatness >= 0.12) {
     return 'SNARE';
   }
-
-  // Sustained low-frequency energy is more useful as a bass/riff gesture than a drum hit.
-  if (o.low >= 0.40 && sustain >= 0.16) return 'BASS';
-
-  // Tonal sustained events become melodic holds or phrase anchors.
-  if (sustain >= 0.28 && flatness <= 0.48) return 'HARMONIC';
 
   if (o.strength >= 0.76) return 'ACCENT';
 
