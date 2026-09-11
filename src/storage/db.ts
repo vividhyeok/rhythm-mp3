@@ -1,8 +1,8 @@
 import { openDB, type IDBPDatabase } from 'idb';
-import type { ScoreRecord, SongMeta, StoredSong } from '../types';
+import type { ChartCacheRecord, ScoreRecord, SongMeta, StoredSong } from '../types';
 
 const DB_NAME = 'rhythm-mp3-db';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 let dbPromise: Promise<IDBPDatabase> | null = null;
 
@@ -15,6 +15,10 @@ function getDb(): Promise<IDBPDatabase> {
         }
         if (!db.objectStoreNames.contains('scores')) {
           db.createObjectStore('scores', { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains('charts')) {
+          const store = db.createObjectStore('charts', { keyPath: 'key' });
+          store.createIndex('songId', 'songId');
         }
       },
     });
@@ -43,14 +47,20 @@ export async function getSongBlob(id: string): Promise<Blob | null> {
 
 export async function deleteSong(id: string): Promise<void> {
   const db = await getDb();
-  await db.delete('songs', id);
-  const keys = (await db.getAllKeys('scores')) as string[];
-  const tx = db.transaction('scores', 'readwrite');
-  for (const k of keys) {
+  const tx = db.transaction(['songs', 'scores', 'charts'], 'readwrite');
+  await tx.objectStore('songs').delete(id);
+
+  const scoreKeys = (await tx.objectStore('scores').getAllKeys()) as string[];
+  for (const k of scoreKeys) {
     if (typeof k === 'string' && k.startsWith(id + '|')) {
-      await tx.store.delete(k);
+      await tx.objectStore('scores').delete(k);
     }
   }
+
+  const chartStore = tx.objectStore('charts');
+  const chartKeys = await chartStore.index('songId').getAllKeys(id);
+  for (const k of chartKeys) await chartStore.delete(k);
+
   await tx.done;
 }
 
@@ -84,4 +94,20 @@ export async function getBestForSong(songId: string): Promise<ScoreRecord | null
     if (r.songId === songId && (!best || r.score > best.score)) best = r;
   }
   return best;
+}
+
+export async function getChartCache(key: string): Promise<ChartCacheRecord | null> {
+  const db = await getDb();
+  const rec = (await db.get('charts', key)) as ChartCacheRecord | undefined;
+  return rec ?? null;
+}
+
+export async function saveChartCache(rec: ChartCacheRecord): Promise<void> {
+  const db = await getDb();
+  await db.put('charts', rec);
+}
+
+export async function countCachedCharts(songId: string): Promise<number> {
+  const db = await getDb();
+  return await db.countFromIndex('charts', 'songId', songId);
 }

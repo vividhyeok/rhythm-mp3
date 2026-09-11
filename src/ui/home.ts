@@ -1,5 +1,6 @@
 import { audioEngine } from '../audio/engine';
-import { addSong, deleteSong, getBestForSong, listSongs } from '../storage/db';
+import { countCachedCharts, addSong, deleteSong, getBestForSong, listSongs } from '../storage/db';
+import { formatBytes, getBrowserStorageInfo, requestPersistentStorage } from '../storage/browser';
 import { session } from '../state';
 import { formatTime } from '../util/segment';
 import { el, show } from './screen';
@@ -22,10 +23,13 @@ export function mountHome(root: HTMLElement): () => void {
   const status = el('div', 'status-line', 'DRAG & DROP MP3 FILES ANYWHERE');
   container.appendChild(status);
 
+  const storageLine = el('div', 'footer-hint', 'LOCAL LIBRARY: CHECKING STORAGE...');
+  container.appendChild(storageLine);
+
   const listEl = el('div', 'song-list');
   container.appendChild(listEl);
 
-  const footer = el('div', 'footer-hint', 'SELECT A SONG TO CONTINUE');
+  const footer = el('div', 'footer-hint', 'FILES + CHARTS STAY IN THIS BROWSER');
   container.appendChild(footer);
 
   root.appendChild(container);
@@ -39,22 +43,33 @@ export function mountHome(root: HTMLElement): () => void {
 
   let disposed = false;
 
+  async function refreshStorageLine(): Promise<void> {
+    const info = await getBrowserStorageInfo();
+    if (disposed) return;
+    const quota = info.quota > 0 ? ` / ${formatBytes(info.quota)}` : '';
+    storageLine.textContent = `LOCAL LIBRARY: ${formatBytes(info.usage)}${quota}  |  ${info.persisted ? 'PERSISTENT' : 'BROWSER MANAGED'}`;
+  }
+
   async function refreshList(): Promise<void> {
     const songs = await listSongs();
     if (disposed) return;
     listEl.innerHTML = '';
     if (songs.length === 0) {
       listEl.appendChild(el('div', 'song-empty', '[ NO SONGS - IMPORT AN MP3 ]'));
+      void refreshStorageLine();
       return;
     }
     for (const s of songs) {
-      const best = await getBestForSong(s.id);
+      const [best, cachedCharts] = await Promise.all([
+        getBestForSong(s.id),
+        countCachedCharts(s.id),
+      ]);
       if (disposed) return;
       const row = el('div', 'song-row');
       const name = el('span', 'song-name', s.name);
       name.title = s.name;
       const dur = el('span', 'song-dur', formatTime(s.duration));
-      const state = el('span', 'song-state', best ? 'PLAYED' : 'NEW');
+      const state = el('span', 'song-state', cachedCharts > 0 ? 'CACHED' : best ? 'PLAYED' : 'NEW');
       const bestEl = el(
         'span',
         'song-best',
@@ -67,6 +82,9 @@ export function mountHome(root: HTMLElement): () => void {
         if (session.song?.id === s.id) {
           session.song = null;
           session.buffer = null;
+          session.analysisSource = null;
+          session.analysisKey = null;
+          session.chart = null;
         }
         void refreshList();
       };
@@ -78,13 +96,20 @@ export function mountHome(root: HTMLElement): () => void {
       row.onclick = () => {
         session.song = s;
         session.buffer = null;
+        session.analysisSource = null;
+        session.analysisKey = null;
+        session.chart = null;
+        session.chartVariant = 0;
         show(mountSegment);
       };
       listEl.appendChild(row);
     }
+    void refreshStorageLine();
   }
 
   async function handleFiles(files: FileList | File[]): Promise<void> {
+    // Best effort: persistent storage reduces the chance that the browser evicts imported MP3s.
+    void requestPersistentStorage();
     const arr = Array.from(files);
     for (const f of arr) {
       status.textContent = `IMPORTING: ${f.name} ...`;
@@ -101,7 +126,7 @@ export function mountHome(root: HTMLElement): () => void {
           addedAt: Date.now(),
           blob: f,
         });
-        status.textContent = `ADDED: ${f.name}`;
+        status.textContent = `SAVED LOCALLY: ${f.name}`;
       } catch {
         status.textContent = `FAILED TO DECODE: ${f.name}`;
       }
@@ -109,7 +134,10 @@ export function mountHome(root: HTMLElement): () => void {
     void refreshList();
   }
 
-  importBtn.onclick = () => fileInput.click();
+  importBtn.onclick = () => {
+    void requestPersistentStorage();
+    fileInput.click();
+  };
   settingsBtn.onclick = () => openSettingsModal();
   fileInput.onchange = () => {
     if (fileInput.files && fileInput.files.length > 0) {
@@ -133,6 +161,7 @@ export function mountHome(root: HTMLElement): () => void {
   container.addEventListener('drop', onDrop);
 
   void refreshList();
+  void refreshStorageLine();
 
   return () => {
     disposed = true;
