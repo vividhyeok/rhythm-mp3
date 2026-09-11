@@ -1,4 +1,4 @@
-import type { Chart, Difficulty } from '../types';
+import type { Chart, ChartSource, Difficulty } from '../types';
 import { analyzeFrames } from './dsp';
 import { detectOnsets } from './onset';
 import { estimateTempo } from './tempo';
@@ -22,6 +22,11 @@ export interface AnalyzeInput {
   onStage?: (stage: AnalysisStage, progress?: number) => void;
 }
 
+export interface AnalyzeResult {
+  chart: Chart;
+  source: ChartSource;
+}
+
 /** Extract a mono Float32Array of the requested segment from an AudioBuffer. */
 export function extractMono(
   buffer: AudioBuffer,
@@ -42,11 +47,8 @@ export function extractMono(
   return { samples: out, sampleRate: sr };
 }
 
-/**
- * Full auto-chart pipeline:
- * decode segment -> frame features -> onset detection -> tempo -> chart.
- */
-export async function analyzeSegment(input: AnalyzeInput): Promise<Chart> {
+/** Full auto-chart pipeline, returning reusable DSP output for regeneration. */
+export async function analyzeSegment(input: AnalyzeInput): Promise<AnalyzeResult> {
   const { buffer, start, duration, difficulty, seed, onStage } = input;
 
   onStage?.('DECODING AUDIO', 0);
@@ -64,15 +66,23 @@ export async function analyzeSegment(input: AnalyzeInput): Promise<Chart> {
   const tempo = estimateTempo(features.flux, features.hopSec);
   onStage?.('DETECTING BEATS', 1);
 
+  const source: ChartSource = {
+    onsets,
+    bpm: tempo.bpm,
+    beatPhaseSec: tempo.beatPhaseSec,
+    tempoConfidence: tempo.confidence,
+  };
+
   onStage?.('BUILDING CHART', 0);
   const chart = generateChart(onsets, {
     difficulty,
     seed,
     bpm: tempo.bpm,
     beatPhaseSec: tempo.beatPhaseSec,
+    tempoConfidence: tempo.confidence,
     duration,
   });
   onStage?.('BUILDING CHART', 1);
 
-  return chart;
+  return { chart, source };
 }
