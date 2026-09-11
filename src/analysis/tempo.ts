@@ -27,10 +27,10 @@ function corrAt(env: Float32Array, lag: number): number {
 /**
  * Estimate tempo from the onset-flux envelope.
  *
- * Compared with the original single-lag autocorrelation, this version uses
- * normalized correlation plus harmonic support. A candidate is rewarded when
- * its half/double-time relatives are also present, which makes octave choices
- * more stable without hard-locking everything toward 120 BPM.
+ * Uses normalized autocorrelation, harmonic support and a conservative octave
+ * correction. When a slow half-time candidate has a strongly supported
+ * double-time pulse, prefer the double-time interpretation because it gives
+ * chart snapping a more useful musical grid without forcing every song to 120.
  */
 export function estimateTempo(flux: Float32Array, hopSec: number): TempoResult {
   const n = flux.length;
@@ -66,14 +66,10 @@ export function estimateTempo(flux: Float32Array, hopSec: number): TempoResult {
     const bpm = 60 / (lag * hopSec);
     let score = corr[lag];
 
-    // Prefer a periodicity whose lower harmonic is also supported. This tends
-    // to pick the musically useful beat instead of a spurious double-time peak.
     if (lag * 2 <= maxLag) score += 0.34 * corr[lag * 2];
     const halfLag = Math.round(lag / 2);
     if (halfLag >= minLag) score += 0.12 * corr[halfLag];
 
-    // Only a mild broad prior: enough to break exact ties, not enough to drag
-    // unusual songs toward 120 BPM.
     const z = Math.log2(bpm / 120) / 1.15;
     const prior = Math.exp(-0.5 * z * z);
     score *= 0.86 + 0.14 * prior;
@@ -87,9 +83,20 @@ export function estimateTempo(flux: Float32Array, hopSec: number): TempoResult {
     }
   }
 
+  // Half-time is a common autocorrelation failure mode. If the chosen tempo is
+  // slow but its double-time lag still has substantial periodic support, use
+  // the denser grid. This is deliberately asymmetric: a 128 BPM pulse is more
+  // useful for 4-key phrasing than an accidental 64 BPM interpretation.
+  const rawBpm = 60 / (bestLag * hopSec);
+  if (rawBpm < 90) {
+    const doubleLag = Math.round(bestLag / 2);
+    if (doubleLag >= minLag && corr[doubleLag] >= corr[bestLag] * 0.58) {
+      bestLag = doubleLag;
+    }
+  }
+
   const bpm = 60 / (bestLag * hopSec);
 
-  // Beat phase: choose the grid offset that catches the most onset energy.
   let bestPhase = 0;
   let bestPhaseSum = -Infinity;
   let phaseTotal = 0;
