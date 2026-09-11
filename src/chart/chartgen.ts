@@ -103,7 +103,7 @@ function eventFromOnset(o: Onset): MusicalEvent {
   else if (o.strength > 0.78) kind = 'ACCENT';
 
   const voice: MusicalVoice =
-    kind === 'KICK' || kind === 'SNARE' || kind === 'HAT' || kind === 'FILL'
+    kind === 'KICK' || kind === 'SNARE' || kind === 'HAT'
       ? 'DRUMS'
       : kind === 'BASS'
         ? 'BASS'
