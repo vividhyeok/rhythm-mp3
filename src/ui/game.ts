@@ -21,9 +21,10 @@ const W = 520;
 const H = 720;
 const JUDGE_Y = H - 150;
 const LANE_TOP = 108;
-const COUNT_IN = 1.8; // seconds of 3-2-1 before audio starts
+const COUNT_IN = 1.8;
 const FADE_SEC = 2.0;
 const END_LINGER = 1.2;
+const HOLD_RELEASE_GRACE = 0.12;
 
 const LANE_KEYS = ['KeyD', 'KeyF', 'KeyJ', 'KeyK'];
 const LANE_LABELS = ['D', 'F', 'J', 'K'];
@@ -36,9 +37,12 @@ const LCD = '#b9c0a8';
 interface RNote {
   time: number;
   lane: number;
+  duration: number;
   judged: boolean;
+  holding: boolean;
   judgement: Judgement | null;
-  hitAt: number; // song time when judged
+  headJudgement: Judgement | null;
+  hitAt: number;
 }
 
 export function mountGame(root: HTMLElement): () => void {
@@ -57,7 +61,6 @@ export function mountGame(root: HTMLElement): () => void {
   const buffer = bufferOpt;
   const song = songOpt;
 
-  // ---- DOM ----
   const hudRow = el('div', 'game-hud-row');
   const pauseBtn = el('button', 'btn tiny', 'PAUSE [ESC]');
   const retryBtn = el('button', 'btn tiny', 'RETRY [R]');
@@ -88,7 +91,6 @@ export function mountGame(root: HTMLElement): () => void {
 
   root.appendChild(container);
 
-  // ---- canvas setup (DPR aware) ----
   const dpr = Math.min(2, window.devicePixelRatio || 1);
   canvas.width = W * dpr;
   canvas.height = H * dpr;
@@ -97,12 +99,14 @@ export function mountGame(root: HTMLElement): () => void {
   const g = canvas.getContext('2d')!;
   g.scale(dpr, dpr);
 
-  // ---- runtime note state ----
   const notes: RNote[] = chart.notes.map((n) => ({
     time: n.time,
     lane: n.lane,
+    duration: Math.max(0, n.duration ?? 0),
     judged: false,
+    holding: false,
     judgement: null,
+    headJudgement: null,
     hitAt: -Infinity,
   }));
   const laneNotes: RNote[][] = [[], [], [], []];
@@ -119,7 +123,6 @@ export function mountGame(root: HTMLElement): () => void {
   const laneFlashUntil = [0, 0, 0, 0];
   const lanePressed = [false, false, false, false];
 
-  // ---- audio scheduling ----
   const ctx = audioEngine.ctx;
   const gain = ctx.createGain();
   const src = ctx.createBufferSource();
@@ -141,9 +144,10 @@ export function mountGame(root: HTMLElement): () => void {
   let cleanedUp = false;
   let raf = 0;
 
-  // ---- judgement ----
   function applyJudgement(note: RNote, j: Judgement, t: number): void {
+    if (note.judged) return;
     note.judged = true;
+    note.holding = false;
     note.judgement = j;
     note.hitAt = t;
     addCount(counts, j);
@@ -160,6 +164,17 @@ export function mountGame(root: HTMLElement): () => void {
     lastJudge = { j, at: performance.now() };
   }
 
+  function startHold(note: RNote, j: Judgement, t: number): void {
+    note.holding = true;
+    note.headJudgement = j;
+    note.hitAt = t;
+    lastJudge = { j, at: performance.now() };
+  }
+
+  function finishHold(note: RNote, t: number): void {
+    applyJudgement(note, note.headJudgement ?? 'GOOD', t);
+  }
+
   function pressLane(lane: number): void {
     const now = performance.now();
     laneFlashUntil[lane] = now + 130;
@@ -167,7 +182,7 @@ export function mountGame(root: HTMLElement): () => void {
     let best: RNote | null = null;
     let bestErr = Infinity;
     for (const n of laneNotes[lane]) {
-      if (n.judged) continue;
+      if (n.judged || n.holding) continue;
       const err = Math.abs(t - n.time);
       if (err < bestErr) {
         bestErr = err;
@@ -177,11 +192,26 @@ export function mountGame(root: HTMLElement): () => void {
     }
     if (best && bestErr <= WINDOW_GOOD) {
       const j = judgeError(bestErr);
-      if (j) applyJudgement(best, j, t);
+      if (!j) return;
+      if (best.duration > 0) startHold(best, j, t);
+      else applyJudgement(best, j, t);
     }
   }
 
-  // ---- pause / resume ----
+  function releaseLane(lane: number): void {
+    lanePressed[lane] = false;
+    if (paused || finished) return;
+    const t = songTime() + settings.inputOffsetMs / 1000;
+    const active = laneNotes[lane].find((n) => n.holding && !n.judged);
+    if (!active) return;
+    const end = active.time + active.duration;
+    if (t < end - HOLD_RELEASE_GRACE) {
+      applyJudgement(active, 'MISS', t);
+    } else {
+      finishHold(active, t);
+    }
+  }
+
   function setPaused(p: boolean): void {
     if (finished || cleanedUp) return;
     if (p === paused) return;
@@ -224,9 +254,7 @@ export function mountGame(root: HTMLElement): () => void {
       retry();
       return;
     }
-    if (e.code === 'Space' || e.code.startsWith('Arrow')) {
-      e.preventDefault();
-    }
+    if (e.code === 'Space' || e.code.startsWith('Arrow')) e.preventDefault();
     if (paused || finished) return;
     const lane = LANE_KEYS.indexOf(e.code);
     if (lane >= 0) {
@@ -235,10 +263,12 @@ export function mountGame(root: HTMLElement): () => void {
       pressLane(lane);
     }
   };
+
   const onKeyUp = (e: KeyboardEvent) => {
     const lane = LANE_KEYS.indexOf(e.code);
-    if (lane >= 0) lanePressed[lane] = false;
+    if (lane >= 0) releaseLane(lane);
   };
+
   const onVisibility = () => {
     if (document.hidden) setPaused(true);
   };
@@ -246,7 +276,6 @@ export function mountGame(root: HTMLElement): () => void {
   window.addEventListener('keyup', onKeyUp);
   document.addEventListener('visibilitychange', onVisibility);
 
-  // ---- finish ----
   async function finish(): Promise<void> {
     if (finished) return;
     finished = true;
@@ -289,7 +318,6 @@ export function mountGame(root: HTMLElement): () => void {
     }
   }
 
-  // ---- render ----
   const laneW = (W - 40) / 4;
   const laneX = (i: number) => 20 + i * laneW;
   const pxPerSec = () => (JUDGE_Y - LANE_TOP) / settings.approachSec;
@@ -310,6 +338,13 @@ export function mountGame(root: HTMLElement): () => void {
     g.fillText(text, x, y);
   }
 
+  function drawTapHead(x: number, y: number, w: number): void {
+    g.fillStyle = INK;
+    g.fillRect(x, y - 11, w, 22);
+    g.fillStyle = LCD;
+    g.fillRect(x + 3, y - 2, w - 6, 4);
+  }
+
   function render(t: number): void {
     const nowMs = performance.now();
     const tVis = t + settings.visualOffsetMs / 1000;
@@ -320,18 +355,15 @@ export function mountGame(root: HTMLElement): () => void {
       g.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
     }
 
-    // background
     g.fillStyle = LCD;
     g.fillRect(0, 0, W, H);
 
-    // top HUD
     drawText(song.name.toUpperCase().slice(0, 26), 16, 26, 14);
     drawText(session.difficulty, W - 16, 26, 14, 'right');
     const score = computeScore(counts, totalNotes);
     drawText(`SCORE ${String(score).padStart(7, '0')}`, 16, 50, 18);
     drawText(`ACC ${computeAccuracy(counts).toFixed(1)}%`, W - 16, 50, 18, 'right');
 
-    // progress bar
     const prog = Math.min(1, Math.max(0, t / duration));
     g.strokeStyle = INK;
     g.lineWidth = 2;
@@ -342,16 +374,13 @@ export function mountGame(root: HTMLElement): () => void {
     drawText(`-${formatTime(remain)}`, W - 16, 92, 13, 'right', INK_DIM);
     drawText(`BPM ~${chart.bpm}`, 16, 92, 13, 'left', INK_DIM);
 
-    // combo
     if (combo >= 2) {
       drawText(`${combo}`, W / 2, 150, 34, 'center');
       drawText('COMBO', W / 2, 168, 12, 'center', INK_DIM);
     }
 
-    // lanes
     for (let i = 0; i < 4; i++) {
       const x = laneX(i);
-      // lane flash on key press
       if (nowMs < laneFlashUntil[i]) {
         g.fillStyle = INK_FAINT;
         g.fillRect(x, LANE_TOP, laneW, JUDGE_Y - LANE_TOP);
@@ -361,38 +390,49 @@ export function mountGame(root: HTMLElement): () => void {
       g.strokeRect(x, LANE_TOP, laneW, JUDGE_Y - LANE_TOP);
     }
 
-    // notes
     const pps = pxPerSec();
     const noteH = 22;
     for (const n of notes) {
-      const y = JUDGE_Y - (n.time - tVis) * pps;
-      if (y < LANE_TOP - noteH) continue;          // not spawned yet
-      if (y > H + 40) continue;                    // long gone
+      const headY = JUDGE_Y - (n.time - tVis) * pps;
+      const tailY = JUDGE_Y - (n.time + n.duration - tVis) * pps;
       const x = laneX(n.lane) + 5;
       const w = laneW - 10;
 
       if (n.judged) {
         if (n.judgement === 'MISS') {
-          // missed note: dim outline sinking past the line
           const age = t - n.hitAt;
           if (age < 0.4) {
             g.strokeStyle = INK_FAINT;
             g.lineWidth = 2;
-            g.strokeRect(x, y - noteH / 2, w, noteH);
+            g.strokeRect(x, Math.min(JUDGE_Y, headY) - noteH / 2, w, noteH);
           }
         }
-        // hit notes are shown as burst effects at the judgement line below
         continue;
       }
 
-      g.fillStyle = INK;
-      g.fillRect(x, y - noteH / 2, w, noteH);
-      // inner stripe (chord vs single gets thicker border look)
-      g.fillStyle = LCD;
-      g.fillRect(x + 3, y - 2, w - 6, 4);
+      if (n.duration > 0) {
+        if (headY < LANE_TOP - noteH && tailY < LANE_TOP - noteH) continue;
+        if (tailY > H + 40) continue;
+        const bodyTop = Math.max(LANE_TOP, Math.min(tailY, n.holding ? JUDGE_Y : headY));
+        const bodyBottom = Math.min(JUDGE_Y, Math.max(tailY, n.holding ? JUDGE_Y : headY));
+        g.fillStyle = n.holding ? INK : INK_DIM;
+        g.fillRect(x + w * 0.32, bodyTop, w * 0.36, Math.max(4, bodyBottom - bodyTop));
+        g.strokeStyle = INK;
+        g.lineWidth = 2;
+        g.strokeRect(x + w * 0.32, bodyTop, w * 0.36, Math.max(4, bodyBottom - bodyTop));
+        if (n.holding) {
+          g.fillStyle = INK;
+          g.fillRect(x, JUDGE_Y - 9, w, 18);
+        } else if (headY >= LANE_TOP - noteH && headY <= H + 40) {
+          drawTapHead(x, headY, w);
+        }
+      } else {
+        if (headY < LANE_TOP - noteH) continue;
+        if (headY > H + 40) continue;
+        drawTapHead(x, headY, w);
+      }
     }
 
-    // hit bursts at judgement line
     for (const n of notes) {
       if (!n.judged || n.judgement === 'MISS') continue;
       const age = t - n.hitAt;
@@ -400,11 +440,10 @@ export function mountGame(root: HTMLElement): () => void {
       const x = laneX(n.lane) + laneW / 2;
       const r = 10 + age * 220;
       g.strokeStyle = INK;
-      g.lineWidth = 3 - age * 12;
+      g.lineWidth = Math.max(1, 3 - age * 12);
       g.strokeRect(x - r, JUDGE_Y - r, r * 2, r * 2);
     }
 
-    // judgement line
     g.fillStyle = INK;
     g.fillRect(16, JUDGE_Y - 3, W - 32, 6);
     for (let i = 0; i < 4; i++) {
@@ -422,7 +461,6 @@ export function mountGame(root: HTMLElement): () => void {
       }
     }
 
-    // judgement pop (center)
     if (lastJudge && nowMs - lastJudge.at < 450) {
       const age = (nowMs - lastJudge.at) / 450;
       const alpha = 1 - age * age;
@@ -440,15 +478,12 @@ export function mountGame(root: HTMLElement): () => void {
         drawText('GREAT', W / 2, H / 2, 26, 'center', INK);
       } else if (j === 'GOOD') {
         drawText('GOOD', W / 2, H / 2, 22, 'center', INK_DIM);
-      } else {
-        if (Math.floor(nowMs / 120) % 2 === 0) {
-          drawText('MISS', W / 2, H / 2, 26, 'center', INK);
-        }
+      } else if (Math.floor(nowMs / 120) % 2 === 0) {
+        drawText('MISS', W / 2, H / 2, 26, 'center', INK);
       }
       g.restore();
     }
 
-    // combo milestone pop
     if (milestone && nowMs - milestone.at < 900) {
       const age = (nowMs - milestone.at) / 900;
       g.save();
@@ -457,7 +492,6 @@ export function mountGame(root: HTMLElement): () => void {
       g.restore();
     }
 
-    // count-in
     if (t < 0) {
       const phase = -t;
       const num = Math.ceil(phase / (COUNT_IN / 3));
@@ -469,11 +503,8 @@ export function mountGame(root: HTMLElement): () => void {
       drawText('START!', W / 2, H / 2, 40, 'center', INK);
     }
 
-    // ending indicators
-    if (t > duration - 5 && t < duration) {
-      if (Math.floor(nowMs / 400) % 2 === 0) {
-        drawText('ENDING...', W / 2, 108, 16, 'center', INK);
-      }
+    if (t > duration - 5 && t < duration && Math.floor(nowMs / 400) % 2 === 0) {
+      drawText('ENDING...', W / 2, 108, 16, 'center', INK);
     }
     if (t > duration - FADE_SEC) {
       const a = Math.min(0.6, Math.max(0, (t - (duration - FADE_SEC)) / FADE_SEC) * 0.6);
@@ -481,23 +512,25 @@ export function mountGame(root: HTMLElement): () => void {
       g.fillRect(0, 0, W, H);
     }
 
-    // bottom hint
     drawText('[ESC] PAUSE   [R] RETRY', W / 2, H - 14, 11, 'center', INK_DIM);
-
     g.restore();
   }
 
-  // ---- main loop ----
   function loop(): void {
     if (cleanedUp) return;
     const t = songTime();
     if (!paused && !finished) {
-      // miss sweep: notes past the good window
+      const adjustedT = t + settings.inputOffsetMs / 1000;
       for (const laneArr of laneNotes) {
         for (const n of laneArr) {
           if (n.judged) continue;
-          if (n.time < t - WINDOW_GOOD) {
-            applyJudgement(n, 'MISS', t);
+          if (n.holding) {
+            const end = n.time + n.duration;
+            if (adjustedT >= end) finishHold(n, adjustedT);
+            continue;
+          }
+          if (n.time < adjustedT - WINDOW_GOOD) {
+            applyJudgement(n, 'MISS', adjustedT);
           } else {
             break;
           }
@@ -513,7 +546,6 @@ export function mountGame(root: HTMLElement): () => void {
   }
   raf = requestAnimationFrame(loop);
 
-  // ---- cleanup ----
   function teardown(): void {
     if (cleanedUp) return;
     cleanedUp = true;
