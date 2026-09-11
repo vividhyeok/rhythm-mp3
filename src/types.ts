@@ -43,6 +43,23 @@ export interface ChartSource {
   tempoConfidence: number;
 }
 
+export interface ChartVariantRecord {
+  variant: number;
+  chart: Chart;
+}
+
+/** Persisted in IndexedDB so a chart survives reload/browser restart. */
+export interface ChartCacheRecord {
+  key: string;
+  songId: string;
+  startMs: number;
+  durationMs: number;
+  difficulty: Difficulty;
+  source: ChartSource;
+  variants: ChartVariantRecord[];
+  updatedAt: number;
+}
+
 export interface ScoreRecord {
   key: string;        // `${songId}|${startMs}|${difficulty}`
   songId: string;
