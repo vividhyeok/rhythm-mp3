@@ -16,6 +16,10 @@ export interface FrameFeatures {
   hopSec: number;
   /** positive spectral flux per frame */
   flux: Float32Array;
+  /** positive low/mid/high-band spectral flux */
+  lowFlux: Float32Array;
+  midFlux: Float32Array;
+  highFlux: Float32Array;
   /** RMS energy per frame */
   rms: Float32Array;
   /** low band energy (<=250Hz) per frame */
@@ -26,6 +30,8 @@ export interface FrameFeatures {
   high: Float32Array;
   /** normalized spectral centroid 0..1 per frame */
   centroid: Float32Array;
+  /** spectral flatness 0..1; noisy/transient spectra are flatter */
+  flatness: Float32Array;
 }
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
@@ -47,11 +53,15 @@ export async function analyzeFrames(
 
   const frameCount = Math.max(0, Math.floor((samples.length - FRAME_SIZE) / HOP_SIZE) + 1);
   const flux = new Float32Array(frameCount);
+  const lowFlux = new Float32Array(frameCount);
+  const midFlux = new Float32Array(frameCount);
+  const highFlux = new Float32Array(frameCount);
   const rms = new Float32Array(frameCount);
   const low = new Float32Array(frameCount);
   const mid = new Float32Array(frameCount);
   const high = new Float32Array(frameCount);
   const centroid = new Float32Array(frameCount);
+  const flatness = new Float32Array(frameCount);
 
   const binHz = sampleRate / FRAME_SIZE;
   const lowEnd = Math.max(1, Math.floor(250 / binHz));
@@ -73,33 +83,62 @@ export async function analyzeFrames(
     fft.realTransform(spectrum, frame);
 
     let f = 0;
+    let lf = 0;
+    let mf = 0;
+    let hf = 0;
     let le = 0;
     let me = 0;
     let he = 0;
     let cnum = 0;
     let cden = 0;
+    let logMag = 0;
+    let magMean = 0;
+    let flatCount = 0;
+
     for (let b = 0; b <= bins; b++) {
       const re = spectrum[2 * b];
       const im = spectrum[2 * b + 1];
       const mag = Math.sqrt(re * re + im * im) / FRAME_SIZE;
       const d = mag - prevMag[b];
-      if (d > 0) f += d;
+      if (d > 0) {
+        f += d;
+        if (b <= lowEnd) lf += d;
+        else if (b <= midEnd) mf += d;
+        else if (b <= highEnd) hf += d;
+      }
       prevMag[b] = mag;
+
       const e = mag * mag;
       if (b <= lowEnd) le += e;
       else if (b <= midEnd) me += e;
       else if (b <= highEnd) he += e;
+
       cnum += b * mag;
       cden += mag;
+
+      if (b > 0 && b <= highEnd) {
+        logMag += Math.log(mag + 1e-12);
+        magMean += mag;
+        flatCount++;
+      }
     }
+
     flux[i] = f;
+    lowFlux[i] = lf;
+    midFlux[i] = mf;
+    highFlux[i] = hf;
     low[i] = le;
     mid[i] = me;
     high[i] = he;
     centroid[i] = cden > 1e-12 ? cnum / cden / bins : 0;
+    if (flatCount > 0 && magMean > 1e-12) {
+      const geo = Math.exp(logMag / flatCount);
+      const arith = magMean / flatCount;
+      flatness[i] = Math.min(1, Math.max(0, geo / arith));
+    }
 
     if ((i & 255) === 0) {
-      onProgress?.(i / frameCount);
+      onProgress?.(i / Math.max(1, frameCount));
       await tick();
     }
   }
@@ -109,10 +148,14 @@ export async function analyzeFrames(
     frameCount,
     hopSec: HOP_SIZE / sampleRate,
     flux,
+    lowFlux,
+    midFlux,
+    highFlux,
     rms,
     low,
     mid,
     high,
     centroid,
+    flatness,
   };
 }

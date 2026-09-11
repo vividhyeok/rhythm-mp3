@@ -22,9 +22,9 @@ function buildNovelty(f: FrameFeatures): Float32Array {
 
   for (let i = 1; i < n; i++) {
     maxFlux = Math.max(maxFlux, f.flux[i]);
-    const lowRise = Math.max(0, f.low[i] - f.low[i - 1]);
-    const midRise = Math.max(0, f.mid[i] - f.mid[i - 1]);
-    const highRise = Math.max(0, f.high[i] - f.high[i - 1]);
+    const lowRise = Math.max(0, f.lowFlux[i]);
+    const midRise = Math.max(0, f.midFlux[i]);
+    const highRise = Math.max(0, f.highFlux[i]);
     bandRise[i] = lowRise + midRise + highRise;
     rmsRise[i] = Math.max(0, f.rms[i] - f.rms[i - 1]);
     maxBandRise = Math.max(maxBandRise, bandRise[i]);
@@ -35,17 +35,37 @@ function buildNovelty(f: FrameFeatures): Float32Array {
     const fluxN = f.flux[i] / maxFlux;
     const bandN = bandRise[i] / maxBandRise;
     const rmsN = rmsRise[i] / maxRmsRise;
-    novelty[i] = 0.72 * fluxN + 0.18 * bandN + 0.10 * rmsN;
+    novelty[i] = 0.68 * fluxN + 0.22 * bandN + 0.10 * rmsN;
   }
   return novelty;
+}
+
+function estimateSustain(f: FrameFeatures, frame: number): number {
+  const peak = f.rms[frame] ?? 0;
+  if (peak <= 1e-8) return 0;
+  const maxFrames = Math.max(1, Math.round(1.8 / f.hopSec));
+  const floor = peak * 0.42;
+  let below = 0;
+  let end = frame;
+  for (let i = frame + 1; i < f.frameCount && i <= frame + maxFrames; i++) {
+    end = i;
+    if (f.rms[i] < floor) below++;
+    else below = 0;
+    if (below >= 3) {
+      end = i - 2;
+      break;
+    }
+  }
+  return Math.max(0, (end - frame) * f.hopSec);
 }
 
 /**
  * Peak-picking on a blended novelty envelope.
  *
- * Spectral flux remains the main signal, but positive low/mid/high-band energy
- * rises and RMS rises are mixed in so softer attacks and strong accents are not
- * missed simply because their broadband spectral flux is modest.
+ * In addition to onset timing/strength, each onset carries attack sharpness,
+ * spectral flatness and a short sustain estimate. These features are later
+ * converted into musical-event roles such as kick, snare, hat, bass and
+ * harmonic sustain instead of treating every transient as the same note.
  */
 export function detectOnsets(f: FrameFeatures, opts: OnsetOptions = {}): Onset[] {
   const windowSec = opts.windowSec ?? 0.5;
@@ -111,6 +131,10 @@ export function detectOnsets(f: FrameFeatures, opts: OnsetOptions = {}): Onset[]
       mid: f.mid[p] / tot,
       high: f.high[p] / tot,
       centroid: f.centroid[p],
+      attack: Math.min(1, Math.max(0, noveltyN)),
+      sustain: estimateSustain(f, p),
+      flatness: f.flatness[p],
+      rms: rmsN,
     };
   });
 }

@@ -11,6 +11,7 @@ import { mountSegment } from './segment';
 const PREVIEW_W = 520;
 const PREVIEW_H = 120;
 const MAX_SAVED_VARIANTS = 8;
+const CHART_ENGINE_VERSION = 'v3-human';
 
 export function mountAnalyzing(root: HTMLElement): () => void {
   const container = el('div', 'screen analyzing');
@@ -55,6 +56,13 @@ export function mountAnalyzing(root: HTMLElement): () => void {
   playBtn.onclick = () => show(mountGame);
 
   const stageLines = new Map<AnalysisStage, HTMLElement>();
+  const stages: AnalysisStage[] = [
+    'DECODING AUDIO',
+    'ANALYZING ONSETS',
+    'DETECTING BEATS',
+    'UNDERSTANDING MUSIC',
+    'BUILDING CHART',
+  ];
 
   function onStage(stage: AnalysisStage, progress?: number): void {
     if (disposed) return;
@@ -68,7 +76,6 @@ export function mountAnalyzing(root: HTMLElement): () => void {
     const done = progress === 1;
     line.textContent = `> ${stage}...${done ? ' OK' : p}`;
     if (progress !== undefined) {
-      const stages: AnalysisStage[] = ['DECODING AUDIO', 'ANALYZING ONSETS', 'DETECTING BEATS', 'BUILDING CHART'];
       const idx = stages.indexOf(stage);
       const total = (idx + progress) / stages.length;
       bar.style.width = `${Math.round(total * 100)}%`;
@@ -92,7 +99,13 @@ export function mountAnalyzing(root: HTMLElement): () => void {
       const x = 8 + (note.time / chart.duration) * (PREVIEW_W - 16);
       const y = 12 + note.lane * 25;
       g.fillStyle = '#23291d';
-      g.fillRect(Math.round(x), y, 2, 18);
+      if ((note.duration ?? 0) > 0) {
+        const w = Math.max(3, ((note.duration ?? 0) / chart.duration) * (PREVIEW_W - 16));
+        g.fillRect(Math.round(x), y + 5, Math.round(w), 8);
+        g.fillRect(Math.round(x), y, 3, 18);
+      } else {
+        g.fillRect(Math.round(x), y, 2, 18);
+      }
     }
     preview.style.display = '';
   }
@@ -109,6 +122,8 @@ export function mountAnalyzing(root: HTMLElement): () => void {
       beatPhaseSec: source.beatPhaseSec,
       tempoConfidence: source.tempoConfidence,
       duration: session.segmentDuration,
+      events: source.events,
+      phraseSec: source.phraseSec,
     });
   }
 
@@ -130,7 +145,6 @@ export function mountAnalyzing(root: HTMLElement): () => void {
     variants.push({ variant, chart });
     variants.sort((a, b) => a.variant - b.variant);
 
-    // Keep the default chart plus the most recent variants without allowing unbounded growth.
     let kept = variants;
     if (variants.length > MAX_SAVED_VARIANTS) {
       const base = variants.find((v) => v.variant === 0);
@@ -156,9 +170,10 @@ export function mountAnalyzing(root: HTMLElement): () => void {
     drawPreview(chart);
     bar.style.width = '100%';
     const nps = chart.duration > 0 ? chart.notes.length / chart.duration : 0;
+    const holds = chart.notes.filter((n) => (n.duration ?? 0) > 0).length;
     const conf = Math.round(source.tempoConfidence * 100);
     const cached = loadedFromCache ? '  |  SAVED' : '';
-    summary.textContent = `NOTES ${chart.notes.length}  |  ${nps.toFixed(1)} NPS  |  BPM ~${chart.bpm}  |  BEAT CONF ${conf}%  |  VAR ${session.chartVariant + 1}${cached}`;
+    summary.textContent = `NOTES ${chart.notes.length}  |  HOLD ${holds}  |  ${nps.toFixed(1)} NPS  |  BPM ~${chart.bpm}  |  BEAT CONF ${conf}%  |  VAR ${session.chartVariant + 1}${cached}`;
     if (source.tempoConfidence < 0.25) {
       const warn = el('div', 'log-line', '> LOW BEAT CONFIDENCE: GRID SNAP REDUCED');
       log.appendChild(warn);
@@ -174,7 +189,8 @@ export function mountAnalyzing(root: HTMLElement): () => void {
       return;
     }
 
-    const baseKey = `${song.id}|${Math.round(segmentStart * 1000)}|${Math.round(segmentDuration * 1000)}|${difficulty}`;
+    // Engine prefix intentionally invalidates v1/v2 cached charts after algorithm upgrades.
+    const baseKey = `${CHART_ENGINE_VERSION}|${song.id}|${Math.round(segmentStart * 1000)}|${Math.round(segmentDuration * 1000)}|${difficulty}`;
 
     try {
       if (session.analysisSource && session.analysisKey === baseKey) {
@@ -187,7 +203,7 @@ export function mountAnalyzing(root: HTMLElement): () => void {
           session.analysisSource = cache.source;
           session.analysisKey = baseKey;
           const chart = findCachedVariant(cache, 0) ?? buildVariant(cache.source, baseKey, 0);
-          log.appendChild(el('div', 'log-line', '> LOADED SAVED ANALYSIS - DSP SKIPPED'));
+          log.appendChild(el('div', 'log-line', '> LOADED V3 MUSICAL ANALYSIS - DSP SKIPPED'));
           showReady(chart, cache.source, true);
           if (!findCachedVariant(cache, 0)) void rememberVariant(baseKey, cache.source, chart, 0);
         } else {

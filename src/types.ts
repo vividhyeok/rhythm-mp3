@@ -11,11 +11,40 @@ export interface StoredSong extends SongMeta {
   blob: Blob;
 }
 
-/** A single playable note. time is seconds relative to segment start. */
+export type MusicalEventKind =
+  | 'KICK'
+  | 'SNARE'
+  | 'HAT'
+  | 'BASS'
+  | 'HARMONIC'
+  | 'ACCENT'
+  | 'FILL';
+
+export type MusicalVoice = 'DRUMS' | 'BASS' | 'MELODY' | 'ACCENT';
+
+/** A perceptual musical event used by the human-like chart generator. */
+export interface MusicalEvent {
+  time: number;
+  strength: number;
+  duration: number;
+  kind: MusicalEventKind;
+  voice: MusicalVoice;
+  low: number;
+  mid: number;
+  high: number;
+  centroid: number;
+  attack: number;
+  flatness: number;
+  isFill: boolean;
+}
+
+/** A single playable note. duration > 0 means a hold note. */
 export interface NoteEvent {
   time: number;     // seconds, relative to segment start
   lane: number;     // 0..3
-  strength: number; // 0..1, onset strength at generation time
+  strength: number; // 0..1, source event strength
+  duration?: number;
+  sourceKind?: MusicalEventKind;
 }
 
 export interface Chart {
@@ -25,7 +54,7 @@ export interface Chart {
   difficulty: Difficulty;
 }
 
-/** Raw detected onset with timbral features (pre chart-generation). */
+/** Raw detected onset with timbral features (pre musical-event classification). */
 export interface Onset {
   time: number;      // seconds relative to segment start
   strength: number;  // 0..1 normalized
@@ -33,14 +62,20 @@ export interface Onset {
   mid: number;       // mid band energy ratio 0..1
   high: number;      // high band energy ratio 0..1
   centroid: number;  // normalized spectral centroid 0..1
+  attack?: number;   // normalized transient sharpness 0..1
+  sustain?: number;  // estimated seconds until local energy decay
+  flatness?: number; // spectral flatness 0..1
+  rms?: number;      // normalized local loudness hint
 }
 
 /** Reusable DSP output so chart variants can be regenerated without re-analysis. */
 export interface ChartSource {
   onsets: Onset[];
+  events: MusicalEvent[];
   bpm: number;
   beatPhaseSec: number;
   tempoConfidence: number;
+  phraseSec: number;
 }
 
 export interface ChartVariantRecord {
