@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateChart } from '../src/chart/chartgen';
-import type { Onset } from '../src/types';
+import type { MusicalEvent, Onset } from '../src/types';
 
 function makeOnsets(count: number, interval: number, start = 0.5): Onset[] {
   const out: Onset[] = [];
@@ -16,6 +16,23 @@ function makeOnsets(count: number, interval: number, start = 0.5): Onset[] {
     });
   }
   return out;
+}
+
+function makeHarmonicEvents(count: number, interval: number): MusicalEvent[] {
+  return Array.from({ length: count }, (_, i) => ({
+    time: 0.5 + i * interval,
+    strength: i % 4 === 0 ? 0.86 : 0.64,
+    duration: 0.82,
+    kind: 'HARMONIC' as const,
+    voice: 'MELODY' as const,
+    low: 0.16,
+    mid: 0.66,
+    high: 0.18,
+    centroid: 0.45 + (i % 4) * 0.04,
+    attack: 0.42,
+    flatness: 0.12,
+    isFill: false,
+  }));
 }
 
 const baseOpts = {
@@ -40,21 +57,15 @@ describe('generateChart', () => {
       const n = chart.notes[i];
       expect(n.lane).toBeGreaterThanOrEqual(0);
       expect(n.lane).toBeLessThanOrEqual(3);
-      if (i > 0) {
-        expect(n.time).toBeGreaterThanOrEqual(chart.notes[i - 1].time);
-      }
+      if (i > 0) expect(n.time).toBeGreaterThanOrEqual(chart.notes[i - 1].time);
     }
   });
 
   it('never places 3+ notes at the same timestamp', () => {
     const chart = generateChart(makeOnsets(120, 0.3), { ...baseOpts, difficulty: 'HARD' });
     const byTime = new Map<number, number>();
-    for (const n of chart.notes) {
-      byTime.set(n.time, (byTime.get(n.time) ?? 0) + 1);
-    }
-    for (const c of byTime.values()) {
-      expect(c).toBeLessThanOrEqual(2);
-    }
+    for (const n of chart.notes) byTime.set(n.time, (byTime.get(n.time) ?? 0) + 1);
+    for (const c of byTime.values()) expect(c).toBeLessThanOrEqual(2);
   });
 
   it('respects minimum interval between note rows', () => {
@@ -83,11 +94,37 @@ describe('generateChart', () => {
     expect(chart.notes.length).toBeGreaterThan(8);
   });
 
-  it('different seeds can produce different charts', () => {
+  it('different seeds can produce different hand patterns', () => {
     const onsets = makeOnsets(80, 0.45);
     const a = generateChart(onsets, { ...baseOpts, seed: 1, difficulty: 'NORMAL' });
     const b = generateChart(onsets, { ...baseOpts, seed: 999999, difficulty: 'NORMAL' });
-    // lanes should differ somewhere (overwhelmingly likely with real variation)
     expect(JSON.stringify(a.notes)).not.toBe(JSON.stringify(b.notes));
+  });
+
+  it('turns sustained melodic events into playable hold notes', () => {
+    const events = makeHarmonicEvents(45, 0.8);
+    const chart = generateChart([], {
+      ...baseOpts,
+      difficulty: 'NORMAL',
+      events,
+      phraseSec: 2,
+    });
+    const holds = chart.notes.filter((n) => (n.duration ?? 0) > 0);
+    expect(holds.length).toBeGreaterThan(4);
+    for (const hold of holds) {
+      expect(hold.duration).toBeGreaterThanOrEqual(0.44);
+      expect(hold.time + (hold.duration ?? 0)).toBeLessThanOrEqual(baseOpts.duration);
+    }
+  });
+
+  it('uses musical source kinds instead of losing event identity', () => {
+    const events = makeHarmonicEvents(20, 1.0);
+    const chart = generateChart([], {
+      ...baseOpts,
+      difficulty: 'NORMAL',
+      events,
+      phraseSec: 2,
+    });
+    expect(chart.notes.some((n) => n.sourceKind === 'HARMONIC')).toBe(true);
   });
 });
