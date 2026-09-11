@@ -35,6 +35,14 @@ export interface Onset {
   centroid: number;  // normalized spectral centroid 0..1
 }
 
+/** Reusable DSP output so chart variants can be regenerated without re-analysis. */
+export interface ChartSource {
+  onsets: Onset[];
+  bpm: number;
+  beatPhaseSec: number;
+  tempoConfidence: number;
+}
+
 export interface ScoreRecord {
   key: string;        // `${songId}|${startMs}|${difficulty}`
   songId: string;
