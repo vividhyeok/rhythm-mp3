@@ -2,12 +2,14 @@ import type { Chart, ChartSource, Difficulty } from '../types';
 import { analyzeFrames } from './dsp';
 import { detectOnsets } from './onset';
 import { estimateTempo } from './tempo';
+import { classifyMusicalEvents } from './musical';
 import { generateChart } from '../chart/chartgen';
 
 export type AnalysisStage =
   | 'DECODING AUDIO'
   | 'ANALYZING ONSETS'
   | 'DETECTING BEATS'
+  | 'UNDERSTANDING MUSIC'
   | 'BUILDING CHART';
 
 export interface AnalyzeInput {
@@ -47,7 +49,7 @@ export function extractMono(
   return { samples: out, sampleRate: sr };
 }
 
-/** Full auto-chart pipeline, returning reusable DSP output for regeneration. */
+/** Full auto-chart pipeline, returning reusable DSP/musical output for regeneration. */
 export async function analyzeSegment(input: AnalyzeInput): Promise<AnalyzeResult> {
   const { buffer, start, duration, difficulty, seed, onStage } = input;
 
@@ -66,11 +68,17 @@ export async function analyzeSegment(input: AnalyzeInput): Promise<AnalyzeResult
   const tempo = estimateTempo(features.flux, features.hopSec);
   onStage?.('DETECTING BEATS', 1);
 
+  onStage?.('UNDERSTANDING MUSIC', 0);
+  const musical = classifyMusicalEvents(onsets, tempo.bpm);
+  onStage?.('UNDERSTANDING MUSIC', 1);
+
   const source: ChartSource = {
     onsets,
+    events: musical.events,
     bpm: tempo.bpm,
     beatPhaseSec: tempo.beatPhaseSec,
     tempoConfidence: tempo.confidence,
+    phraseSec: musical.phraseSec,
   };
 
   onStage?.('BUILDING CHART', 0);
@@ -81,6 +89,8 @@ export async function analyzeSegment(input: AnalyzeInput): Promise<AnalyzeResult
     beatPhaseSec: tempo.beatPhaseSec,
     tempoConfidence: tempo.confidence,
     duration,
+    events: musical.events,
+    phraseSec: musical.phraseSec,
   });
   onStage?.('BUILDING CHART', 1);
 
